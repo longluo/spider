@@ -30,35 +30,36 @@ class Blog(object):
     def __init__(self, url):
         self.baseUrl = url
         self.archivesUrl = self.baseUrl + "/archives"
+
         self.user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) " \
                           "Chrome/87.0.4280.141 Safari/537.36 Edg/87.0.664.75 "
         self.headers = {"User-Agent": self.user_agent}
 
-        self.data = pd.DataFrame(columns=['id', 'title', 'create_date', 'article_link'])
+        self.total_pages = 1
 
-        logger.info(self.baseUrl + " , " + self.archivesUrl)
+        self.data = pd.DataFrame(columns=['id', 'title', 'create_date', 'article_link'])
 
     def __del__(self):
         print('End!')
 
     def start(self):
-        self.get_html(self.archivesUrl)
+        self.total_pages = self.get_total_page()
 
-        datalist, datatime, datalink = self.get_page()
+        data_list, data_time, data_link = self.get_page()
 
         result_data = pd.DataFrame(columns=np.array(self.data.columns))
 
-        for i in range(0, len(datalist)):
+        for i in range(0, len(data_list)):
             uid = i + 1
-            title = datalist[i]
-            create_date = ""
-            article_link = datalink[i]
+            title = data_list[i]
+            create_date = data_time[i]
+            article_link = data_link[i]
 
-            # logger.info(uid + "," + title + "," + create_date + "," + article_link)
             result_data.loc[len(result_data), :] = [uid, title, create_date, article_link]
 
             self.data = self.data.append(result_data, ignore_index=True)
-            self.save_to_csv()
+
+        self.save_to_csv()
 
     def get_html(self, url):
         request = urllib.request.Request(url, headers=self.headers)
@@ -76,55 +77,61 @@ class Blog(object):
 
         return html
 
+    def get_total_page(self):
+        html = self.get_html(self.archivesUrl)
+
+        page_number = re.compile('[0-9]+')
+
+        soap = BeautifulSoup(html, 'html.parser')
+
+        page_item = soap.find_all('a', class_="page-number")
+        total_pages = re.findall(page_number, str(page_item))[-1]
+        return int(total_pages)
+
     def get_page(self):
         data_list = []
-        data_time = []
+        data_date = []
         data_link = []
 
-        article_link = re.compile('<a class="post-title-link" href="(.*)" itemprop="url">')
+        page_post_link = re.compile('<a class="post-title-link" href="(.*)" itemprop="url">')
 
-        logger.info(article_link)
-
-        # total_pages = re.compile('<span class="space">&hellip;</span><a class="page-number" href="(.*)">(.*)</a>')
-
-        for i in range(1, 2):
-
-            finddata = re.compile('<span itemprop="name">(.*)</span>')
+        for i in range(1, self.total_pages):
+            page_post_title = re.compile('<span itemprop="name">(.*)</span>')
+            page_post_date = re.compile('[0-9]{4}-[0-9]{2}-[0-9]{2}')
 
             if i == 1:
-                findurl = self.archivesUrl
+                page_url = self.archivesUrl
             else:
-                findurl = self.baseUrl + '/page/' + str(i) + '/'
+                page_url = self.archivesUrl + '/page/' + str(i) + '/'
 
-            logger.info(finddata)
-            logger.info(findurl)
-
-            html = self.get_html(findurl)
+            html = self.get_html(page_url)
 
             soap = BeautifulSoup(html, 'html.parser')  # 用html.parser来解析该html网页
 
-            for item in soap.find_all('span', itemprop="name"):
-                data = re.findall(finddata, str(item))[0]
-                data_list.append(data)
+            for title_item in soap.find_all('span', itemprop="name"):
+                post_title = re.findall(page_post_title, str(title_item))[0]
+                data_list.append(post_title)
 
-            for item1 in soap.find_all('time', class_='post-time'):
-                a = str(item1).find('content') + 9
-                a1 = str(item1).find('"', a)
-                data_time.append(str(item1)[a:a1])
+            for date_item in soap.find_all('time', itemprop='dateCreated'):
+                post_date = re.findall(page_post_date, str(date_item))[0]
+                data_date.append(post_date)
 
-            for item in soap.find_all('a', class_="post-title-link"):
-                alink = re.findall(article_link, str(item))[0]
-                data_link.append(self.baseUrl + alink)
+            for link_item in soap.find_all('a', class_="post-title-link"):
+                post_link = re.findall(page_post_link, str(link_item))[0]
+                data_link.append(self.baseUrl + post_link)
 
-        return data_list, data_time, data_link
+        return data_list, data_date, data_link
 
     def save_to_csv(self):
-        self.data.to_csv(r"blog.csv", mode='a', encoding="utf-8-sig", index=False)
+        self.data.to_csv(r"blog.csv", mode='w', encoding="utf-8-sig", index=False)
 
     def get_article(self, url):
         alinklist = []
+
         html = self.get_html(url)
+
         findalink = re.compile('<a class="post-title-link" href="(.*)" itemprop="url">')
+
         soap = BeautifulSoup(html, 'html.parser')
         for item in soap.find_all('a', class_="post-title-link"):
             alink = re.findall(findalink, str(item))[0]
