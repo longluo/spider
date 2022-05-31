@@ -4,6 +4,8 @@
 import logging.config
 import os
 import re
+import sqlite3
+import subprocess
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -37,17 +39,19 @@ class Blog(object):
 
         self.total_pages = 1
 
-        self.data = pd.DataFrame(columns=['id', 'title', 'create_date', 'article_link'])
+        self.posts_data = pd.DataFrame(columns=['id', 'title', 'create_date', 'article_link'])
+
+        self.db_path = 'blog.db'
 
     def __del__(self):
         print('End!')
 
     def start(self):
-        self.total_pages = self.get_total_page()
+        # self.total_pages = self.get_total_page()
+        self.total_pages = 2
 
         data_list, data_time, data_link = self.get_page()
-
-        result_data = pd.DataFrame(columns=np.array(self.data.columns))
+        result_data = pd.DataFrame(columns=np.array(self.posts_data.columns))
 
         for i in range(0, len(data_list)):
             uid = i + 1
@@ -56,10 +60,14 @@ class Blog(object):
             article_link = data_link[i]
 
             result_data.loc[len(result_data), :] = [uid, title, create_date, article_link]
+            self.posts_data = self.posts_data.append(result_data, ignore_index=False)
+            logger.info(str(uid) + " " + title + " " + create_date + " " + article_link)
 
-            self.data = self.data.append(result_data, ignore_index=True)
+        for i in range(0, len(data_link)):
+            self.get_article(data_link[i])
 
         self.save_to_csv()
+        self.save_data_2_db()
 
     def get_html(self, url):
         request = urllib.request.Request(url, headers=self.headers)
@@ -123,32 +131,57 @@ class Blog(object):
         return data_list, data_date, data_link
 
     def save_to_csv(self):
-        self.data.to_csv(r"blog.csv", mode='w', encoding="utf-8-sig", index=False)
+        self.posts_data.to_csv(r"blog.csv", mode='w', encoding="utf-8-sig", index=False)
 
     def get_article(self, url):
-        alinklist = []
+        response = requests.get(url)
 
-        html = self.get_html(url)
+        html = response.text
 
-        findalink = re.compile('<a class="post-title-link" href="(.*)" itemprop="url">')
+        selector = parsel.Selector(html)
 
-        soap = BeautifulSoup(html, 'html.parser')
-        for item in soap.find_all('a', class_="post-title-link"):
-            alink = re.findall(findalink, str(item))[0]
-            alinklist.append(alink)
+        content = selector.css('article').get()
 
-        for i in alinklist:
-            articleurl = self.baseUrl + i
-            print(articleurl)
-            response = requests.get(articleurl)
-            html = response.text
-            sel = parsel.Selector(html)
-            content = sel.css('article').get()
-            text = tomd.Tomd(content).markdown
-            print(text)
-            with open('pc.md', mode='a', encoding='utf-8', )as f:
-                f.write(text)
-                f.close()
+        text = tomd.Tomd(content).markdown
+
+        with open('pc.md', mode='a', encoding='utf-8', )as f:
+            f.write(text)
+            f.close()
+
+    def get_photo(self):
+        cmd = 'phantomjs pageload.js "%s"' % self.baseUrl
+        subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
+
+    def init_db(self, dbpath):  # 初始化数据库
+        sql = """
+            create table RIN 
+            (
+            id integer primary key autoincrement,
+            article_title text,
+            create_date text,
+            article_link text
+            )
+        """
+        conn = sqlite3.connect(dbpath)
+        cursor = conn.cursor()
+        cursor.execute(sql)
+        conn.commit()
+        conn.close()
+
+    def save_data_2_db(self):  # 保存数据到数据库
+        self.init_db(self.db_path)
+        conn = sqlite3.connect(self.db_path)  # 创建数据库连接对象
+        cur = conn.cursor()  # 创建游标对象
+
+        for item in self.posts_data:
+            sql = """
+                insert into RIN(article_title, create_date, article_link)
+                values (%s)""" % ",".join(item)
+            cur.execute(sql)  # 执行sql语句
+            conn.commit()  # 提交事务
+
+        cur.close()
+        conn.close()
 
 
 def main():
